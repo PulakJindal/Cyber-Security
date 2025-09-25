@@ -1,10 +1,14 @@
 import sys
 import socket
+import re
 from datetime import datetime
 
 #Define out target
 if len(sys.argv) == 2:  #checking the number of argumensts(2nd arg - ip)
-    target = socket.gethostbyname(sys.argv[1]) #Translate hostname to ipv4
+    arg = sys.argv[1]
+    pattern = re.compile(r"^((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$") #Regex for validating an IP address
+    if pattern.match(arg):  #if the argument is an IP address
+        target = socket.gethostbyname(arg) #Translate hostname to ipv4
 else:
     print("Invalid amount of arguments.")
     print("Syntax: python scanner.py <ip>")
