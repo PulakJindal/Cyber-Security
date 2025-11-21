@@ -3,13 +3,17 @@ import sqlite3
 import argparse
 import threading
 import time
+import queue
+from collections import deque, namedtuple
+import curses
+import socket
 
 count = 0
 def packet_callback(packet):
     global count
     count += 1
-    #print(f"[{count}]"+packet.summary())
-    print(f"[{count}] New Packet: {packet[0][1]} / {packet[Raw].load if packet.haslayer(Raw) else None}")
+    print(f"[{count}]"+packet.summary())
+    #print(f"[{count}] New Packet: {packet[0][1]} / {packet[Raw].load if packet.haslayer(Raw) else None}")
     # if packet.haslayer(DNS):
     #     count += 1
     #     ip_layer = packet.getlayer(DNS)
@@ -23,9 +27,22 @@ def packet_callback(packet):
     #     with open("captured_packets.csv", "a") as log_file:
     #         log_file.write(f"Non-IP Packet: {other_layer.summary()}\n")
             
-def start_sniffing(interface=None, filter=None, cnt=0):
+def start_sniffing(interface=None, filter=None, cnt=0, openedSocket=False):
     print("[*] Starting packet sniffing...")
-    sniff(count=int(cnt), prn=packet_callback, iface=interface)
+    sniff(count=int(cnt), prn=packet_callback, iface=interface, opened_socket=openedSocket, filter=filter)
+
+def user_interaction():
+    while True:
+        cmd = input("Enter command (stats/stop/filter): ").strip().lower()
+        if cmd == "stats":
+            print("Showing stats...")
+        elif cmd == "stop":
+            print("Stopping sniffing...")
+            break
+        elif cmd.startswith("filter"):
+            print(f"Changing filter to: {cmd.split(' ', 1)[1]}")
+        else:
+            print("Unknown command")
 
 def dbCreation():
     conn = sqlite3.connect("packets.db")            # connect to the database
@@ -47,6 +64,24 @@ def dbCreation():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON packets(timestamp)")  # Index for faster timestamp queries
     conn.commit()
 
+def dbInsertion():
+    conn = sqlite3.connect("packets.db")
+    cursor = conn.cursor()
+    while True:
+        time.sleep(5)
+        # Placeholder for actual packet insertion logic
+        # Example:
+        # cursor.execute("INSERT INTO packets (timestamp, src_ip, dst_ip, protocol, length, raw_data) VALUES (?, ?, ?, ?, ?, ?)", (timestamp, src_ip, dst_ip, protocol, length, raw_data))
+        conn.commit()
+
+def functionCaller(interface=None, filter=None, cnt=0, openedSocket=False, toSave=False):
+    if toSave:
+        dbCreation()
+    start_sniffing(interface, filter, cnt, openedSocket)
+    if toSave:
+        dbInset_thread = threading.Thread(target=dbInsertion, daemon=True)
+        dbInset_thread.start()
+
 def main():
     parser = argparse.ArgumentParser(
         prog = sniffer.py,
@@ -55,6 +90,7 @@ def main():
     
     parser.add_argument(
         "-i", "--interface",
+        default=get_if_list()[0],
         help="Network interface to sniff on",
         type=str,
         )
@@ -133,16 +169,24 @@ def main():
         filters.append(f"proto {args.protocol}")
 
     bpf_filter = " and ".join(filters) if filters else None
-
-    if args.save:
-        dbCreation()
     
     if args.timeout:
-        sniff_thread = threading.Thread(target=start_sniffing, args=(args.interface, bpf_filter, args.count))
+        sniff_thread = threading.Thread(target=functionCaller, args=(args.interface, bpf_filter, args.count, args.opend_socket, args.save))
         sniff_thread.start()
         time.sleep(args.timeout)
         print("[*] Timeout reached, stopping sniffing...")
-        # Note: Stopping sniffing gracefully is complex; this is a placeholder.
+    
+    else:
+        sniff_thread = threading.Thread(target=functionCaller, args=(args.interface, bpf_filter, args.count, args.opend_socket, args.save))
+        sniff_thread.start()
+        
+    ui_thread = threading.Thread(target=user_interaction, deamon=True)
+
+    sniff_thread.start()
+    ui_thread.start()
+
+    sniff_thread.join()
+    ui_thread.join()
         
 if __name__ == "__main__":
     main()
