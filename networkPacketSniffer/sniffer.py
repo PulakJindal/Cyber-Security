@@ -5,28 +5,99 @@ import threading
 import time
 import queue
 from collections import deque, namedtuple
+from dataclasses import dataclass, field
 import curses
 import socket
 
-count = 0
+PacketInfo = namedtuple("PacketInfo", ["ts", "summary", "src", "sport", "dst", "dport", "proto", "raw"])
+packet_dqueue = deque(maxlen=1000)   
+connection_table = {}
+
+@dataclass
+class ConnectionState:
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+    packet_count: int = 0
+    byte_count: int = 0
+    state: str = "NEW"
+
+def update_connection(pkt: PacketInfo):
+
+    end1 = (pkt.src, pkt.sport)
+    end2 = (pkt.dst, pkt.dport)
+
+    if end1 <= end2:
+        key = PacketInfo(pkt.src, pkt.sport, pkt.dst, pkt.dport, pkt.proto)
+    else:
+        key = PacketInfo(pkt.dst, pkt.dport, pkt.src, pkt.sport, pkt.proto)
+
+    if key not in connection_table:
+        connection_table[key] = ConnectionState()
+
+    conn = connection_table[key]
+
+    # Update stats
+    conn.packet_count += 1
+    conn.byte_count += len(pkt.raw)
+    conn.last_seen = pkt.ts
+
+    # TCP state tracking
+    if pkt.proto == "TCP":
+        flags = pkt.raw.sprintf("%TCP.flags%")
+        if "S" in flags and "A" not in flags:
+            conn.state = "SYN_SENT"
+        elif "SA" in flags:
+            conn.state = "ESTABLISHED"
+        elif "F" in flags:
+            conn.state = "FIN_WAIT"
+        elif "R" in flags:
+            conn.state = "RESET"
+    elif pkt.proto == "UDP":
+        if conn.state == "NEW":
+            conn.state = "ACTIVE"
+
+def pkt_to_info(pkt):
+    ts = time.time()
+    proto = None
+    src = dst = sport = dport = None
+    raw = None
+    try:
+        if IP in pkt:
+            ip = pkt[IP]
+            src = ip.src
+            dst = ip.dst
+            if TCP in pkt:
+                proto = "TCP"
+                sport = pkt[TCP].sport
+                dport = pkt[TCP].dport
+            elif UDP in pkt:
+                proto = "UDP"
+                sport = pkt[UDP].sport
+                dport = pkt[UDP].dport
+            else:
+                proto = ip.proto
+            raw = bytes(pkt[Raw].load) if pkt.haslayer(Raw) else None
+        elif Ether in pkt:
+            # Non-IP, show simple summary
+            proto = "ETH"
+            src = pkt[Ether].src
+            dst = pkt[Ether].dst
+        summary = pkt.summary()
+    except Exception as e:
+        # defensive
+        summary = f"parse_error: {e}"
+    return PacketInfo(ts=ts, summary=summary, src=src, sport=sport, dst=dst, dport=dport, proto=proto, raw=raw)
+
 def packet_callback(packet):
-    global count
-    count += 1
-    print(f"[{count}]"+packet.summary())
-    #print(f"[{count}] New Packet: {packet[0][1]} / {packet[Raw].load if packet.haslayer(Raw) else None}")
-    # if packet.haslayer(DNS):
-    #     count += 1
-    #     ip_layer = packet.getlayer(DNS)
-    #     print(f"{count}[+] New DNS Packet: {ip_layer.summary()}")
-    #     print(f"{count}[+] New Packet: {ip_layer.src} -> {ip_layer.dst}")
-    #     with open("captured_packets.csv", "a") as log_file:
-    #         log_file.write(f"{ip_layer.src} -> {ip_layer.dst}\n")
-    # else:
-    #     print(f"{count}[+] New Packet: Non-IP Packet")
-    #     other_layer = packet.getlayer(0)
-    #     with open("captured_packets.csv", "a") as log_file:
-    #         log_file.write(f"Non-IP Packet: {other_layer.summary()}\n")
-            
+    pktinfo = pkt_to_info(packet)
+    # put into general UI queue
+    try:
+        packet_dqueue.put(pktinfo, block=False)
+    except queue.Full:
+        pass
+    # add to connection structures
+    update_connection(pktinfo)
+
 def start_sniffing(interface=None, filter=None, cnt=0, openedSocket=False):
     print("[*] Starting packet sniffing...")
     sniff(count=int(cnt), prn=packet_callback, iface=interface, opened_socket=openedSocket, filter=filter)
@@ -82,9 +153,9 @@ def functionCaller(interface=None, filter=None, cnt=0, openedSocket=False, toSav
         dbInset_thread = threading.Thread(target=dbInsertion, daemon=True)
         dbInset_thread.start()
 
-def main():
+def parsesAndFilter():
     parser = argparse.ArgumentParser(
-        prog = sniffer.py,
+        prog = "sniffer.py",
         description="Network Packet Sniffer"
         )
     
@@ -158,9 +229,9 @@ def main():
     filters = []
 
     if args.src_ip:
-        filters.append(f"src host {args.src_ip}")
+        filters.append(f"src host {args.src_IP}")
     if args.dst_ip:
-        filters.append(f"dst host {args.dst_ip}")
+        filters.append(f"dst host {args.dst_IP}")
     if args.src_port:
         filters.append(f"src port {args.src_port}")
     if args.dst_port:
@@ -170,14 +241,21 @@ def main():
 
     bpf_filter = " and ".join(filters) if filters else None
     
-    if args.timeout:
-        sniff_thread = threading.Thread(target=functionCaller, args=(args.interface, bpf_filter, args.count, args.opend_socket, args.save))
+    return bpf_filter, args.timeout, args.interface, args.count, args.opend_socket, args.save
+    
+
+def main():
+    
+    bpf_filter, timeout, interface, count, opend_socket, save = parsesAndFilter()
+    
+    if timeout:
+        sniff_thread = threading.Thread(target=functionCaller, args=(interface, bpf_filter, count, opend_socket, save))
         sniff_thread.start()
-        time.sleep(args.timeout)
+        time.sleep(timeout)
         print("[*] Timeout reached, stopping sniffing...")
     
     else:
-        sniff_thread = threading.Thread(target=functionCaller, args=(args.interface, bpf_filter, args.count, args.opend_socket, args.save))
+        sniff_thread = threading.Thread(target=functionCaller, args=(interface, bpf_filter, count, opend_socket, save))
         sniff_thread.start()
         
     ui_thread = threading.Thread(target=user_interaction, deamon=True)
