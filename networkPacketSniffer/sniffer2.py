@@ -1,9 +1,9 @@
-# two_pane_sniffer.py
 import threading
 import queue
 import time
 from collections import deque, namedtuple
 import curses
+import argparse
 import socket
 
 from scapy.all import sniff, IP, TCP, UDP, Raw, Ether
@@ -226,7 +226,6 @@ def draw_ui(stdscr):
 
 # ---- Main / runner ----
 def main():
-    import argparse
     parser = argparse.ArgumentParser("two_pane_sniffer")
     parser.add_argument("-i", "--interface", help="Interface to sniff on", default=None)
     parser.add_argument("-f", "--filter", help="BPF filter", default=None)
